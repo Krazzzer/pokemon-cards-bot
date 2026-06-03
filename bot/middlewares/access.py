@@ -4,25 +4,19 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject, User
 
-from bot.config import get_settings
+from bot.db.session import get_session_factory
+from bot.services.access import is_user_allowed as is_user_allowed_in_db
 
 
 DENIED_TEXT = "У вас нет доступа к личному меню этого бота."
 
 
-def is_user_allowed(user: User | None) -> bool:
+async def is_user_allowed(user: User | None) -> bool:
     if user is None:
         return False
 
-    settings = get_settings()
-    allowed_ids = (
-        set(settings.allowed_user_ids)
-        | set(settings.seller_ids)
-        | set(settings.admin_ids)
-    )
-    if not allowed_ids:
-        return True
-    return user.id in allowed_ids
+    async with get_session_factory()() as session:
+        return await is_user_allowed_in_db(session, user.id)
 
 
 class UserAccessMiddleware(BaseMiddleware):
@@ -43,7 +37,7 @@ class UserAccessMiddleware(BaseMiddleware):
         ):
             return await handler(event, data)
 
-        if is_user_allowed(user):
+        if await is_user_allowed(user):
             return await handler(event, data)
 
         if isinstance(event, CallbackQuery):

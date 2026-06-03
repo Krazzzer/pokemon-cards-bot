@@ -37,6 +37,16 @@ class User(Base):
     bids: Mapped[list["Bid"]] = relationship(back_populates="user")
 
 
+class AllowedUser(Base):
+    __tablename__ = "allowed_users"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    added_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
 class Listing(Base):
     __tablename__ = "listings"
 

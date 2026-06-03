@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from bot.config import get_settings
-from bot.db.models import Base
+from bot.db.models import AllowedUser, Base
 
 _engine = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -20,6 +20,11 @@ _LISTING_COLUMNS = [
 
 _USER_COLUMNS = [
     ("successful_deals", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+_ALLOWED_USER_COLUMNS = [
+    ("added_by", "BIGINT"),
+    ("created_at", "DATETIME"),
 ]
 
 
@@ -53,6 +58,16 @@ async def run_migrations(conn) -> None:
     for name, ddl in _USER_COLUMNS:
         if name not in existing_user_columns:
             await conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
+
+    allowed_result = await conn.execute(text("PRAGMA table_info(allowed_users)"))
+    allowed_rows = allowed_result.fetchall()
+    existing_allowed_columns = {row[1] for row in allowed_rows}
+    for name, ddl in _ALLOWED_USER_COLUMNS:
+        if name not in existing_allowed_columns:
+            await conn.execute(text(f"ALTER TABLE allowed_users ADD COLUMN {name} {ddl}"))
+    await conn.execute(
+        text("UPDATE allowed_users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+    )
 
     result = await conn.execute(text("PRAGMA table_info(listings)"))
     rows = result.fetchall()
@@ -117,6 +132,21 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await run_migrations(conn)
+    await seed_allowed_users()
+
+
+async def seed_allowed_users() -> None:
+    """Import legacy ALLOWED_USER_IDS into the dynamic whitelist once."""
+    settings = get_settings()
+    if not settings.allowed_user_ids:
+        return
+
+    factory = get_session_factory()
+    async with factory() as session:
+        for user_id in settings.allowed_user_ids:
+            if await session.get(AllowedUser, user_id) is None:
+                session.add(AllowedUser(telegram_id=user_id))
+        await session.commit()
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

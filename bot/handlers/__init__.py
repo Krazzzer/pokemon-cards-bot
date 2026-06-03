@@ -1,6 +1,7 @@
 from aiogram import Router
 
 from bot.handlers import (
+    access_admin,
     auction_bids,
     auction_fsm,
     callbacks,
@@ -16,6 +17,7 @@ def setup_routers() -> Router:
     access_middleware = UserAccessMiddleware()
     root.message.middleware(access_middleware)
     root.callback_query.middleware(access_middleware)
+    root.include_router(access_admin.router)
     root.include_router(start.router)
     root.include_router(sell_fsm.router)
     root.include_router(auction_fsm.router)
