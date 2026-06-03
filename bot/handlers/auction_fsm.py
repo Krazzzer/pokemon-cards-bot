@@ -22,6 +22,7 @@ from bot.services.posts import (
     publish_listing,
     render_caption,
 )
+from bot.services.seller_access import ensure_seller_callback, ensure_seller_message
 from bot.utils.datetime_parse import parse_auction_end
 
 router = Router(name="auction_fsm")
@@ -49,12 +50,16 @@ async def _start_auction(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("auction"), F.chat.type == "private")
 async def cmd_auction(message: Message, state: FSMContext) -> None:
+    if not await ensure_seller_message(message):
+        return
     await _start_auction(message, state)
 
 
 @router.callback_query(F.data == "auction_start")
 async def cb_auction_start(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message is None:
+        return
+    if not await ensure_seller_callback(callback):
         return
     await callback.answer()
     await _start_auction(callback.message, state)

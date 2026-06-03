@@ -5,10 +5,10 @@ from aiogram import Bot
 from aiogram.types import InputMediaPhoto
 
 from bot.config import get_settings
-from bot.db.models import Listing, ListingStatus, User
+from bot.db.models import Listing, ListingItem, ListingStatus, User
 from bot.keyboards.inline import auction_group_keyboard, listing_group_keyboard
 from bot.services.listing_utils import is_auction
-from bot.services.listings import parse_media_file_ids
+from bot.services.listings import has_listing_items, parse_media_file_ids
 from bot.services.telegram_safe import (
     safe_edit_message_caption,
     safe_edit_message_reply_markup,
@@ -58,6 +58,63 @@ def _format_includes_block(description: str) -> list[str]:
         if line:
             block.append(f"• {html.escape(line)}")
     return block
+
+
+def _item_status_line(item: ListingItem) -> str:
+    status = (
+        item.status.value
+        if isinstance(item.status, ListingStatus)
+        else str(item.status).lower()
+    )
+    if status == ListingStatus.ACTIVE.value:
+        return "🟢 в продаже"
+    if status == ListingStatus.RESERVED.value and item.buyer_id:
+        return f"🟡 резерв — {_buyer_mention(item.buyer_id, None)}"
+    if status == ListingStatus.SOLD.value:
+        return "🔴 продано"
+    if status == ListingStatus.CANCELLED.value:
+        return "⚫ снято"
+    return "недоступно"
+
+
+def render_multi_sale_caption(listing: Listing) -> str:
+    seller = listing.seller
+    lines = [
+        "🃏 <b>Товары в продаже</b>",
+        "",
+    ]
+
+    for item in listing.items:
+        lines.append(
+            f"{item.position}. <b>{html.escape(item.title)}</b> — "
+            f"{format_price(item.price, item.currency)}"
+        )
+        if item.description:
+            lines.append(f"   📝 {html.escape(item.description)}")
+        lines.append(f"   Статус: {_item_status_line(item)}")
+
+    lines.append("")
+    lines.append(f"Продавец: {_seller_mention(seller, listing.seller_id)}")
+    return "\n".join(lines)
+
+
+def render_multi_sale_preview(items: list[dict], *, currency: str, seller: User) -> str:
+    lines = [
+        "🃏 <b>Товары в продаже</b>",
+        "",
+    ]
+    for index, item in enumerate(items, start=1):
+        lines.append(
+            f"{index}. <b>{html.escape(item['title'])}</b> — "
+            f"{format_price(float(item['price']), currency)}"
+        )
+        if item.get("description"):
+            lines.append(f"   📝 {html.escape(item['description'])}")
+        lines.append("   Статус: 🟢 в продаже")
+
+    lines.append("")
+    lines.append(f"Продавец: {_seller_mention(seller, seller.telegram_id)}")
+    return "\n".join(lines)
 
 
 def render_auction_caption(
@@ -157,13 +214,21 @@ def render_caption(
 ) -> str:
     if is_auction(listing):
         return render_auction_caption(listing, leader_username=leader_username)
+    if has_listing_items(listing):
+        return render_multi_sale_caption(listing)
     return render_sale_caption(listing, buyer_username=buyer_username)
 
 
-def group_keyboard(listing: Listing):
+def group_keyboard(listing: Listing, *, bot_username: str | None = None):
     if is_auction(listing):
-        return auction_group_keyboard(listing)
-    return listing_group_keyboard(listing)
+        return auction_group_keyboard(listing, bot_username=bot_username)
+    return listing_group_keyboard(listing, bot_username=bot_username)
+
+
+async def group_keyboard_for_bot(bot: Bot, listing: Listing):
+    me = await bot.get_me()
+    bot_username = me.username
+    return group_keyboard(listing, bot_username=bot_username)
 
 
 def _keyboard_for_publish(listing: Listing | None):
@@ -175,7 +240,7 @@ def _keyboard_for_publish(listing: Listing | None):
 async def attach_group_listing_keyboard(bot: Bot, listing: Listing) -> bool:
     if listing.group_chat_id is None or listing.message_id is None:
         return False
-    keyboard = group_keyboard(listing)
+    keyboard = await group_keyboard_for_bot(bot, listing)
     if keyboard is None:
         return False
     await safe_edit_message_reply_markup(
@@ -253,6 +318,48 @@ async def publish_listing(
     return control.message_id, media_file_ids
 
 
+async def publish_multi_item_listing(
+    bot: Bot,
+    *,
+    group_chat_id: int,
+    items: list[dict],
+    currency: str,
+    media_file_ids: list[str],
+    seller: User,
+) -> tuple[int, list[str]]:
+    caption = render_multi_sale_preview(items, currency=currency, seller=seller)
+
+    if not media_file_ids:
+        msg = await bot.send_message(
+            chat_id=group_chat_id,
+            text=caption,
+            parse_mode="HTML",
+        )
+        return msg.message_id, media_file_ids
+
+    if len(media_file_ids) == 1:
+        msg = await bot.send_photo(
+            chat_id=group_chat_id,
+            photo=media_file_ids[0],
+            caption=caption,
+            parse_mode="HTML",
+        )
+        return msg.message_id, media_file_ids
+
+    media = [InputMediaPhoto(media=fid) for fid in media_file_ids[:10]]
+    album_messages = await bot.send_media_group(chat_id=group_chat_id, media=media)
+    album_first_id = album_messages[0].message_id
+
+    control_text = f"{caption}\n\n<i>↑ фото товаров ({len(media)} шт.)</i>"
+    control = await bot.send_message(
+        chat_id=group_chat_id,
+        text=control_text,
+        parse_mode="HTML",
+        reply_to_message_id=album_first_id,
+    )
+    return control.message_id, media_file_ids
+
+
 async def update_listing_post(
     bot: Bot,
     listing: Listing,
@@ -268,13 +375,21 @@ async def update_listing_post(
         buyer_username=buyer_username,
         leader_username=leader_username,
     )
-    keyboard = group_keyboard(listing)
+    keyboard = await group_keyboard_for_bot(bot, listing)
 
     file_ids = parse_media_file_ids(listing)
     chat_id = listing.group_chat_id
     message_id = listing.message_id
 
-    if len(file_ids) <= 1:
+    if not file_ids:
+        await safe_edit_message_text(
+            bot,
+            chat_id=chat_id,
+            message_id=message_id,
+            text=caption,
+            reply_markup=keyboard,
+        )
+    elif len(file_ids) == 1:
         await safe_edit_message_caption(
             bot,
             chat_id=chat_id,
@@ -283,7 +398,8 @@ async def update_listing_post(
             reply_markup=keyboard,
         )
     else:
-        text = f"{caption}\n\n<i>↑ фото лота ({len(file_ids)} шт.)</i>"
+        photo_label = "товаров" if has_listing_items(listing) else "лота"
+        text = f"{caption}\n\n<i>↑ фото {photo_label} ({len(file_ids)} шт.)</i>"
         await safe_edit_message_text(
             bot,
             chat_id=chat_id,

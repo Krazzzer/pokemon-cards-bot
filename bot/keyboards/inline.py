@@ -1,13 +1,46 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.db.models import Listing
+from bot.db.models import Listing, ListingItem, ListingStatus
 from bot.services.listing_utils import is_active_listing, is_auction
-from bot.services.listings import min_bid_amount
+from bot.services.listings import has_listing_items, min_bid_amount
 
 
-def listing_group_keyboard(listing: Listing) -> InlineKeyboardMarkup | None:
+def _item_is_active(item: ListingItem) -> bool:
+    status = (
+        item.status.value
+        if isinstance(item.status, ListingStatus)
+        else str(item.status).lower()
+    )
+    return status == ListingStatus.ACTIVE.value
+
+
+def listing_group_keyboard(
+    listing: Listing,
+    *,
+    bot_username: str | None = None,
+) -> InlineKeyboardMarkup | None:
     if is_auction(listing):
         return auction_group_keyboard(listing)
+    if has_listing_items(listing):
+        if any(_item_is_active(item) for item in listing.items):
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Купить в ЛС",
+                            url=f"https://t.me/{bot_username}?start=buy_{listing.id}",
+                        )
+                    ]
+                    if bot_username
+                    else [
+                        InlineKeyboardButton(
+                            text="Купить",
+                            callback_data=f"buylist:{listing.id}",
+                        )
+                    ]
+                ]
+            )
+        return None
     if is_active_listing(listing):
         return InlineKeyboardMarkup(
             inline_keyboard=[
@@ -22,13 +55,63 @@ def listing_group_keyboard(listing: Listing) -> InlineKeyboardMarkup | None:
     return None
 
 
-def auction_group_keyboard(listing: Listing) -> InlineKeyboardMarkup | None:
+def listing_items_buy_keyboard(
+    listing: Listing,
+    *,
+    include_back: bool = True,
+) -> InlineKeyboardMarkup | None:
+    if not has_listing_items(listing):
+        return listing_group_keyboard(listing)
+
+    rows = []
+    for item in listing.items:
+        if _item_is_active(item):
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{item.position}. Купить — {item.title[:30]}",
+                        callback_data=f"buyitem:{item.id}",
+                    )
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{item.position}. Недоступно — {item.title[:25]}",
+                        callback_data=f"noop:{item.id}",
+                    )
+                ]
+            )
+
+    if include_back:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Свернуть",
+                    callback_data=f"backbuy:{listing.id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def auction_group_keyboard(
+    listing: Listing,
+    *,
+    bot_username: str | None = None,
+) -> InlineKeyboardMarkup | None:
     if not is_auction(listing) or not is_active_listing(listing):
         return None
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="Сделать ставку в ЛС",
+                    url=f"https://t.me/{bot_username}?start=bid_{listing.id}",
+                )
+                if bot_username
+                else InlineKeyboardButton(
                     text="Сделать ставку",
                     callback_data=f"bid:{listing.id}",
                 )
@@ -128,6 +211,41 @@ def seller_listing_keyboard(listing: Listing) -> InlineKeyboardMarkup | None:
     return None
 
 
+def seller_listing_item_keyboard(item: ListingItem) -> InlineKeyboardMarkup | None:
+    status = (
+        item.status.value
+        if isinstance(item.status, ListingStatus)
+        else str(item.status).lower()
+    )
+    if status == ListingStatus.RESERVED.value:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Продано",
+                        callback_data=f"solditem:{item.id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="Снять резерв",
+                        callback_data=f"unresitem:{item.id}",
+                    ),
+                ]
+            ]
+        )
+    if status == ListingStatus.ACTIVE.value:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Отменить товар",
+                        callback_data=f"cancelitem:{item.id}",
+                    )
+                ]
+            ]
+        )
+    return None
+
+
 def start_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -154,6 +272,21 @@ def sell_confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def sell_items_menu_keyboard(has_items: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="Добавить товар", callback_data="sell_add_item")],
+    ]
+    if has_items:
+        rows.append(
+            [
+                InlineKeyboardButton(text="Предпросмотр", callback_data="sell_preview"),
+                InlineKeyboardButton(text="Опубликовать", callback_data="sell_publish"),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="Отмена", callback_data="sell_abort")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def auction_confirm_keyboard() -> InlineKeyboardMarkup:

@@ -40,7 +40,7 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def run_migrations(conn) -> None:
-    """Create tables, then add auction columns to legacy SQLite DBs."""
+    """Create tables, then add missing columns to legacy SQLite DBs."""
     await conn.run_sync(Base.metadata.create_all)
 
     result = await conn.execute(text("PRAGMA table_info(listings)"))

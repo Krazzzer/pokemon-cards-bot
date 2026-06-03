@@ -2,9 +2,9 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from bot.db.models import ListingStatus
+from bot.db.models import ListingItem, ListingStatus
 from bot.db.session import get_session_factory
-from bot.keyboards.inline import seller_listing_keyboard
+from bot.keyboards.inline import seller_listing_item_keyboard, seller_listing_keyboard
 from bot.services.listing_utils import (
     is_active_listing,
     is_auction,
@@ -14,12 +14,17 @@ from bot.services.auction_lifecycle import notify_auction_finished
 from bot.services.listings import (
     cancel_auction_if_no_bids,
     cancel_listing,
+    cancel_listing_item,
     end_auction_by_seller,
     get_seller_listings,
+    has_listing_items,
+    mark_listing_item_sold,
     mark_sold,
+    unreserve_listing_item,
     unreserve_listing,
 )
 from bot.services.posts import render_caption, update_listing_post
+from bot.services.seller_access import ensure_seller_message
 
 router = Router(name="seller_actions")
 
@@ -36,7 +41,35 @@ def _status_label(listing) -> str:
     return labels.get(listing_status_value(listing), listing_status_value(listing))
 
 
+def _item_status_label(item: ListingItem) -> str:
+    status = (
+        item.status.value
+        if isinstance(item.status, ListingStatus)
+        else str(item.status).lower()
+    )
+    labels = {
+        "active": "🟢 в продаже",
+        "reserved": "🟡 зарезервировано",
+        "sold": "🔴 продано",
+        "cancelled": "⚫ снято",
+    }
+    return labels.get(status, status)
+
+
 async def _send_listing_card(target: Message, listing) -> None:
+    if has_listing_items(listing):
+        await target.answer(render_caption(listing), parse_mode="HTML")
+        for item in listing.items:
+            kb = seller_listing_item_keyboard(item)
+            if kb is None:
+                continue
+            await target.answer(
+                f"<b>{item.position}. {item.title}</b> — {_item_status_label(item)}",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        return
+
     text = (
         f"<b>{listing.title}</b> — {_status_label(listing)}\n"
         f"{render_caption(listing)}"
@@ -45,9 +78,18 @@ async def _send_listing_card(target: Message, listing) -> None:
     await target.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
+def _find_item(listing, item_id: str) -> ListingItem | None:
+    for item in getattr(listing, "items", []):
+        if item.id == item_id:
+            return item
+    return None
+
+
 @router.message(Command("my"), F.chat.type == "private")
 async def cmd_my(message: Message) -> None:
     if message.from_user is None:
+        return
+    if not await ensure_seller_message(message):
         return
 
     async with get_session_factory()() as session:
@@ -127,6 +169,87 @@ async def on_unreserve(callback: CallbackQuery) -> None:
             render_caption(listing),
             parse_mode="HTML",
             reply_markup=seller_listing_keyboard(listing),
+        )
+
+
+@router.callback_query(F.data.startswith("solditem:"))
+async def on_sold_item(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+
+    item_id = (callback.data or "").removeprefix("solditem:")
+    seller_id = callback.from_user.id
+
+    async with get_session_factory()() as session:
+        listing = await mark_listing_item_sold(session, item_id, seller_id)
+
+    if listing is None:
+        await callback.answer("Не удалось отметить товар как проданный.", show_alert=True)
+        return
+
+    await callback.answer("Товар отмечен как проданный!")
+    await update_listing_post(callback.bot, listing)
+
+    item = _find_item(listing, item_id)
+    if callback.message and item:
+        await callback.message.edit_text(
+            f"<b>{item.position}. {item.title}</b> — {_item_status_label(item)}",
+            parse_mode="HTML",
+            reply_markup=seller_listing_item_keyboard(item),
+        )
+
+
+@router.callback_query(F.data.startswith("unresitem:"))
+async def on_unreserve_item(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+
+    item_id = (callback.data or "").removeprefix("unresitem:")
+    seller_id = callback.from_user.id
+
+    async with get_session_factory()() as session:
+        listing = await unreserve_listing_item(session, item_id, seller_id)
+
+    if listing is None:
+        await callback.answer("Не удалось снять резерв с товара.", show_alert=True)
+        return
+
+    await callback.answer("Резерв снят, товар снова в продаже.")
+    await update_listing_post(callback.bot, listing)
+
+    item = _find_item(listing, item_id)
+    if callback.message and item:
+        await callback.message.edit_text(
+            f"<b>{item.position}. {item.title}</b> — {_item_status_label(item)}",
+            parse_mode="HTML",
+            reply_markup=seller_listing_item_keyboard(item),
+        )
+
+
+@router.callback_query(F.data.startswith("cancelitem:"))
+async def on_cancel_listing_item(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+
+    item_id = (callback.data or "").removeprefix("cancelitem:")
+    seller_id = callback.from_user.id
+
+    async with get_session_factory()() as session:
+        listing = await cancel_listing_item(session, item_id, seller_id)
+
+    if listing is None:
+        await callback.answer("Не удалось отменить товар.", show_alert=True)
+        return
+
+    await callback.answer("Товар снят с продажи.")
+    await update_listing_post(callback.bot, listing)
+
+    item = _find_item(listing, item_id)
+    if callback.message and item:
+        await callback.message.edit_text(
+            f"<b>{item.position}. {item.title}</b> — {_item_status_label(item)}",
+            parse_mode="HTML",
+            reply_markup=seller_listing_item_keyboard(item),
         )
 
 

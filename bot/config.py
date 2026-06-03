@@ -1,8 +1,8 @@
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -14,7 +14,14 @@ class Settings(BaseSettings):
 
     bot_token: str = Field(alias="BOT_TOKEN")
     group_chat_id: int = Field(alias="GROUP_CHAT_ID")
-    admin_ids: list[int] = Field(default_factory=list, alias="ADMIN_IDS")
+    admin_ids: Annotated[list[int], NoDecode] = Field(
+        default_factory=list,
+        alias="ADMIN_IDS",
+    )
+    seller_ids: Annotated[list[int], NoDecode] = Field(
+        default_factory=list,
+        alias="SELLER_IDS",
+    )
     database_url: str = Field(
         default="sqlite+aiosqlite:///./data/bot.db",
         alias="DATABASE_URL",
@@ -22,9 +29,9 @@ class Settings(BaseSettings):
     default_currency: str = Field(default="RUB", alias="DEFAULT_CURRENCY")
     auction_timezone: str = Field(default="Europe/Chisinau", alias="AUCTION_TIMEZONE")
 
-    @field_validator("admin_ids", mode="before")
+    @field_validator("admin_ids", "seller_ids", mode="before")
     @classmethod
-    def parse_admin_ids(cls, value: Any) -> list[int]:
+    def parse_id_list(cls, value: Any) -> list[int]:
         if value is None or value == "":
             return []
         if isinstance(value, list):
