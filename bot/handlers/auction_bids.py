@@ -203,7 +203,7 @@ async def _apply_bid(
     )
     if callback:
         await callback.answer("Ставка принята!")
-        if callback.message:
+        if callback.message and callback.message.chat.type == "private":
             await callback.message.answer(msg)
     elif reply_to:
         await reply_to.answer(msg)

@@ -3,8 +3,6 @@ from aiogram.types import CallbackQuery
 
 from bot.db.session import get_session_factory
 from bot.keyboards.inline import (
-    listing_group_keyboard,
-    listing_items_buy_keyboard,
     seller_listing_item_keyboard,
 )
 from bot.services.listing_utils import is_auction
@@ -15,39 +13,10 @@ from bot.services.listings import (
     reserve_listing_item,
     upsert_user,
 )
-from bot.services.posts import render_caption, update_listing_post
+from bot.services.posts import update_listing_post
 from bot.services.telegram_safe import safe_callback_answer
 
 router = Router(name="callbacks")
-
-
-async def _send_private_buy_menu(callback: CallbackQuery, listing) -> None:
-    if callback.from_user is None:
-        return
-
-    try:
-        await callback.bot.send_message(
-            chat_id=callback.from_user.id,
-            text=(
-                "Выберите товар для покупки:\n\n"
-                f"{render_caption(listing)}"
-            ),
-            parse_mode="HTML",
-            reply_markup=listing_items_buy_keyboard(listing, include_back=False),
-        )
-    except Exception:
-        await safe_callback_answer(
-            callback,
-            "Не могу отправить меню в ЛС. Откройте чат с ботом и нажмите /start, затем попробуйте снова.",
-            show_alert=True,
-        )
-        return
-
-    await safe_callback_answer(
-        callback,
-        "Меню покупки отправлено в личные сообщения с ботом.",
-        show_alert=True,
-    )
 
 
 @router.callback_query(F.data.startswith("noop:"))
@@ -57,30 +26,11 @@ async def on_noop(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("buylist:"))
 async def on_buy_list(callback: CallbackQuery) -> None:
-    listing_id = (callback.data or "").removeprefix("buylist:")
-    async with get_session_factory()() as session:
-        listing = await get_listing(session, listing_id)
-
-    if listing is None or not has_listing_items(listing):
-        await safe_callback_answer(callback, "Объявление недоступно.", show_alert=True)
-        return
-
-    await _send_private_buy_menu(callback, listing)
-
-
-@router.callback_query(F.data.startswith("backbuy:"))
-async def on_buy_back(callback: CallbackQuery) -> None:
-    listing_id = (callback.data or "").removeprefix("backbuy:")
-    async with get_session_factory()() as session:
-        listing = await get_listing(session, listing_id)
-
-    if listing is None:
-        await safe_callback_answer(callback, "Объявление недоступно.", show_alert=True)
-        return
-
-    if callback.message:
-        await callback.message.edit_reply_markup(reply_markup=listing_group_keyboard(listing))
-    await safe_callback_answer(callback)
+    await safe_callback_answer(
+        callback,
+        "Эта кнопка устарела. Используйте отдельную кнопку нужного товара под постом.",
+        show_alert=True,
+    )
 
 
 @router.callback_query(F.data.startswith("buyitem:"))
@@ -123,13 +73,6 @@ async def on_buy_item(callback: CallbackQuery) -> None:
         "Товар зарезервирован! Продавец получит уведомление.",
     )
     await update_listing_post(callback.bot, listing)
-    if callback.message and callback.message.chat.type == "private":
-        await callback.message.edit_text(
-            "Выберите товар для покупки:\n\n"
-            f"{render_caption(listing)}",
-            parse_mode="HTML",
-            reply_markup=listing_items_buy_keyboard(listing, include_back=False),
-        )
 
     seller_text = (
         f"🟡 Товар <b>{item.position}. {item.title}</b> зарезервирован!\n"
@@ -179,7 +122,11 @@ async def on_buy(callback: CallbackQuery) -> None:
             )
             return
         if listing_check and has_listing_items(listing_check):
-            await _send_private_buy_menu(callback, listing_check)
+            await safe_callback_answer(
+                callback,
+                "Эта кнопка устарела. Используйте отдельную кнопку нужного товара под постом.",
+                show_alert=True,
+            )
             return
 
         result = await reserve_listing(session, listing_id, buyer.id)

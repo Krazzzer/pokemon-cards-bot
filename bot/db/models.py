@@ -28,6 +28,7 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    successful_deals: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )

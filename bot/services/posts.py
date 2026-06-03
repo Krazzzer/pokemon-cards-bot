@@ -40,9 +40,11 @@ def format_price(price: float, currency: str) -> str:
 
 
 def _seller_mention(seller: User | None, seller_id: int) -> str:
+    deals = getattr(seller, "successful_deals", 0) or 0
+    rating = f" (сделок: {deals})"
     if seller and seller.username:
-        return f"@{html.escape(seller.username)}"
-    return f'<a href="tg://user?id={seller_id}">продавец</a>'
+        return f"@{html.escape(seller.username)}{rating}"
+    return f'<a href="tg://user?id={seller_id}">продавец</a>{rating}'
 
 
 def _buyer_mention(buyer_id: int, buyer_username: str | None) -> str:

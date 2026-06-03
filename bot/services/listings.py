@@ -153,6 +153,15 @@ def _item_status_value(item: ListingItem) -> str:
     return str(status).lower()
 
 
+async def _increment_seller_successful_deals(
+    session: AsyncSession,
+    seller_id: int,
+) -> None:
+    seller = await session.get(User, seller_id)
+    if seller is not None:
+        seller.successful_deals = (seller.successful_deals or 0) + 1
+
+
 async def _sync_parent_listing_status(
     session: AsyncSession, listing_id: str
 ) -> Listing | None:
@@ -331,6 +340,7 @@ async def mark_sold(session: AsyncSession, listing_id: str, seller_id: int) -> L
 
     listing.status = ListingStatus.SOLD
     listing.sold_at = datetime.utcnow()
+    await _increment_seller_successful_deals(session, listing.seller_id)
     await session.commit()
     await session.refresh(listing, attribute_names=["seller"])
     return listing
@@ -352,6 +362,7 @@ async def mark_listing_item_sold(
 
     item.status = ListingStatus.SOLD
     item.sold_at = datetime.utcnow()
+    await _increment_seller_successful_deals(session, item.listing.seller_id)
     await session.commit()
     return await _sync_parent_listing_status(session, item.listing_id)
 
@@ -600,6 +611,7 @@ async def finalize_auction(
         listing.status = ListingStatus.SOLD
         listing.buyer_id = listing.high_bidder_id
         listing.sold_at = now
+        await _increment_seller_successful_deals(session, listing.seller_id)
     else:
         listing.status = ListingStatus.CANCELLED
 

@@ -18,6 +18,10 @@ _LISTING_COLUMNS = [
     ("high_bidder_id", "BIGINT"),
 ]
 
+_USER_COLUMNS = [
+    ("successful_deals", "INTEGER NOT NULL DEFAULT 0"),
+]
+
 
 def get_engine():
     global _engine, _session_factory
@@ -43,6 +47,13 @@ async def run_migrations(conn) -> None:
     """Create tables, then add missing columns to legacy SQLite DBs."""
     await conn.run_sync(Base.metadata.create_all)
 
+    user_result = await conn.execute(text("PRAGMA table_info(users)"))
+    user_rows = user_result.fetchall()
+    existing_user_columns = {row[1] for row in user_rows}
+    for name, ddl in _USER_COLUMNS:
+        if name not in existing_user_columns:
+            await conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
+
     result = await conn.execute(text("PRAGMA table_info(listings)"))
     rows = result.fetchall()
     if not rows:
@@ -62,6 +73,41 @@ async def run_migrations(conn) -> None:
               AND min_bid_step IS NOT NULL
               AND ends_at IS NOT NULL
               AND (kind IS NULL OR kind IN ('sale', 'SALE'))
+            """
+        )
+    )
+
+    await conn.execute(
+        text(
+            """
+            UPDATE users
+            SET successful_deals =
+                (
+                    SELECT COUNT(*)
+                    FROM listings AS listing_sales
+                    WHERE listing_sales.seller_id = users.telegram_id
+                      AND LOWER(listing_sales.status) = 'sold'
+                      AND (
+                          LOWER(COALESCE(listing_sales.kind, 'sale')) = 'auction'
+                          OR (
+                              LOWER(COALESCE(listing_sales.kind, 'sale')) = 'sale'
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM listing_items AS existing_items
+                                  WHERE existing_items.listing_id = listing_sales.id
+                              )
+                          )
+                      )
+                )
+                +
+                (
+                    SELECT COUNT(*)
+                    FROM listing_items AS sold_items
+                    JOIN listings AS item_listings
+                      ON item_listings.id = sold_items.listing_id
+                    WHERE item_listings.seller_id = users.telegram_id
+                      AND LOWER(sold_items.status) = 'sold'
+                )
             """
         )
     )
