@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot
 
+from bot.db.models import User
 from bot.db.session import get_session_factory
 from bot.services.auction_lifecycle import notify_auction_finished
 from bot.services.listings import finalize_auction, get_expired_auctions
@@ -22,8 +23,18 @@ async def finalize_expired_auctions(bot: Bot) -> int:
             if finalized is None:
                 continue
             count += 1
-            await update_listing_post(bot, finalized)
-            await notify_auction_finished(bot, finalized)
+            winner = (
+                await session.get(User, finalized.high_bidder_id)
+                if finalized.high_bidder_id
+                else None
+            )
+            winner_username = winner.username if winner else None
+            await update_listing_post(bot, finalized, leader_username=winner_username)
+            await notify_auction_finished(
+                bot,
+                finalized,
+                winner_username=winner_username,
+            )
     return count
 
 

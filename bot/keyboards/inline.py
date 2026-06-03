@@ -23,25 +23,27 @@ def listing_group_keyboard(
         return auction_group_keyboard(listing)
     if has_listing_items(listing):
         rows = []
+        row = []
         for item in listing.items:
             if _item_is_active(item):
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            text=f"{item.position}. Купить — {item.title[:30]}",
-                            callback_data=f"buyitem:{item.id}",
-                        )
-                    ]
+                row.append(
+                    InlineKeyboardButton(
+                        text=f"Купить {item.position}",
+                        callback_data=f"buyitem:{item.id}",
+                    )
                 )
             else:
-                rows.append(
-                    [
-                        InlineKeyboardButton(
-                            text=f"{item.position}. Недоступно — {item.title[:25]}",
-                            callback_data=f"noop:{item.id}",
-                        )
-                    ]
+                row.append(
+                    InlineKeyboardButton(
+                        text=f"Нет {item.position}",
+                        callback_data=f"noop:{item.id}",
+                    )
                 )
+            if len(row) == 3:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
         return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
     if is_active_listing(listing):
         return InlineKeyboardMarkup(
@@ -302,10 +304,9 @@ def sell_confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 def sell_items_menu_keyboard(has_items: bool) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="Добавить товар", callback_data="sell_add_item")],
-    ]
+    rows = [[InlineKeyboardButton(text="Добавить товар", callback_data="sell_add_item")]]
     if has_items:
+        rows[0].append(InlineKeyboardButton(text="Добавить фото", callback_data="sell_add_photo"))
         rows.append(
             [
                 InlineKeyboardButton(text="Предпросмотр", callback_data="sell_preview"),

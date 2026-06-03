@@ -2,7 +2,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from bot.db.models import ListingItem, ListingStatus
+from bot.db.models import ListingItem, ListingStatus, User
 from bot.db.session import get_session_factory
 from bot.keyboards.inline import seller_listing_item_keyboard, seller_listing_keyboard
 from bot.services.listing_utils import (
@@ -289,6 +289,11 @@ async def on_end_auction(callback: CallbackQuery) -> None:
 
     async with get_session_factory()() as session:
         listing = await end_auction_by_seller(session, listing_id, seller_id)
+        winner = (
+            await session.get(User, listing.high_bidder_id)
+            if listing and listing.high_bidder_id
+            else None
+        )
 
     if listing is None:
         await callback.answer(
@@ -297,8 +302,13 @@ async def on_end_auction(callback: CallbackQuery) -> None:
         )
         return
 
-    await update_listing_post(callback.bot, listing)
-    await notify_auction_finished(callback.bot, listing)
+    winner_username = winner.username if winner else None
+    await update_listing_post(callback.bot, listing, leader_username=winner_username)
+    await notify_auction_finished(
+        callback.bot,
+        listing,
+        winner_username=winner_username,
+    )
 
     if listing.high_bidder_id:
         await callback.answer("Аукцион завершён. Победитель уведомлён.")
@@ -307,7 +317,7 @@ async def on_end_auction(callback: CallbackQuery) -> None:
 
     if callback.message:
         await callback.message.edit_text(
-            render_caption(listing),
+            render_caption(listing, leader_username=winner_username),
             parse_mode="HTML",
             reply_markup=None,
         )

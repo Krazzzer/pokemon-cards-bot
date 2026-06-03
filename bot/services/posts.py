@@ -157,7 +157,7 @@ def render_auction_caption(
 
     if listing.status == ListingStatus.SOLD and listing.buyer_id:
         winner = _buyer_mention(listing.buyer_id, leader_username)
-        lines.append(f"Потенциальный покупатель: {winner}")
+        lines.append(f"Победитель: {winner}")
     elif listing.status == ListingStatus.CANCELLED:
         lines.append("Потенциальный покупатель:")
     elif listing.high_bidder_id:

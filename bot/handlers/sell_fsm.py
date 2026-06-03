@@ -40,7 +40,7 @@ async def cmd_sell(message: Message, state: FSMContext) -> None:
     if not await ensure_seller_message(message):
         return
     await state.clear()
-    await state.update_data(items=[])
+    await state.update_data(items=[], photos=[])
     await _show_menu(message, state)
 
 
@@ -52,7 +52,7 @@ async def cb_sell_start_fsm(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await callback.answer()
     await state.clear()
-    await state.update_data(items=[])
+    await state.update_data(items=[], photos=[])
     await _show_menu(callback.message, state)
 
 
@@ -64,13 +64,6 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await message.answer("Создание отменено.")
-
-
-def _total_photos(items: list[dict], current_item: dict | None = None) -> int:
-    total = sum(len(item.get("photos", [])) for item in items)
-    if current_item:
-        total += len(current_item.get("photos", []))
-    return total
 
 
 def _items_summary(items: list[dict], currency: str) -> str:
@@ -89,11 +82,13 @@ async def _show_menu(message: Message | None, state: FSMContext) -> None:
         return
     data = await state.get_data()
     items: list[dict] = data.get("items", [])
+    photos: list[str] = data.get("photos", [])
     settings = get_settings()
     await state.set_state(SellStates.menu)
     await message.answer(
         "<b>Создание объявления со списком товаров</b>\n\n"
         f"{_items_summary(items, settings.default_currency)}\n\n"
+        f"Фото в посте: {len(photos)}/{MAX_PHOTOS}\n\n"
         "Добавьте товары по порядку. Когда список будет готов — опубликуйте.",
         parse_mode="HTML",
         reply_markup=sell_items_menu_keyboard(bool(items)),
@@ -104,12 +99,6 @@ async def _show_menu(message: Message | None, state: FSMContext) -> None:
 async def sell_add_item(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     items: list[dict] = data.get("items", [])
-    if _total_photos(items) >= MAX_PHOTOS:
-        await callback.answer(
-            f"Достигнут общий лимит {MAX_PHOTOS} фото.",
-            show_alert=True,
-        )
-        return
     await callback.answer()
     await state.update_data(current_item={})
     await state.set_state(SellStates.item_title)
@@ -156,20 +145,41 @@ async def sell_price(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     item = dict(data.get("current_item", {}))
     item["price"] = price
-    item["photos"] = []
     await state.update_data(current_item=item)
-    await state.set_state(SellStates.item_photos)
+    await state.set_state(SellStates.item_description)
     await message.answer(
-        f"Отправьте фото товара, если хотите. Общий лимит — {MAX_PHOTOS} фото на весь пост.\n"
-        "Можно сразу нажать «Готово», чтобы добавить товар без фото.",
-        reply_markup=sell_photos_done_keyboard(),
+        "Введите <b>описание</b> (состояние, доставка и т.д.) "
+        "или нажмите «Пропустить»:",
+        parse_mode="HTML",
+        reply_markup=sell_skip_description_keyboard(),
     )
+
+
+@router.callback_query(SellStates.menu, F.data == "sell_add_photo")
+async def sell_add_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    photos: list[str] = data.get("photos", [])
+    if len(photos) >= MAX_PHOTOS:
+        await callback.answer(
+            f"Достигнут общий лимит {MAX_PHOTOS} фото.",
+            show_alert=True,
+        )
+        return
+    await callback.answer()
+    await state.set_state(SellStates.item_photos)
+    if callback.message:
+        await callback.message.answer(
+            f"Отправьте фото для общего поста.\n"
+            f"Общий лимит — {MAX_PHOTOS} фото.\n"
+            "Когда загрузите все — нажмите «Готово».",
+            reply_markup=sell_photos_done_keyboard(),
+        )
 
 
 @router.message(SellStates.item_photos, ~F.photo, F.chat.type == "private")
 async def sell_photos_other(message: Message) -> None:
     await message.answer(
-        "Отправьте фото товара или нажмите «Готово», чтобы продолжить без фото.",
+        "Отправьте фото товара или нажмите «Готово».",
         reply_markup=sell_photos_done_keyboard(),
     )
 
@@ -177,18 +187,15 @@ async def sell_photos_other(message: Message) -> None:
 @router.message(SellStates.item_photos, F.photo, F.chat.type == "private")
 async def sell_photo(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    items: list[dict] = data.get("items", [])
-    item = dict(data.get("current_item", {}))
-    photos: list[str] = list(item.get("photos", []))
-    if _total_photos(items, item) >= MAX_PHOTOS:
-        await message.answer(f"Максимум {MAX_PHOTOS} фото на весь пост. Нажмите «Готово».")
+    photos: list[str] = list(data.get("photos", []))
+    if len(photos) >= MAX_PHOTOS:
+        await message.answer(f"Максимум {MAX_PHOTOS} фото. Нажмите «Готово».")
         return
     file_id = message.photo[-1].file_id
     photos.append(file_id)
-    item["photos"] = photos
-    await state.update_data(current_item=item)
+    await state.update_data(photos=photos)
     await message.answer(
-        f"Фото добавлено. Всего фото в посте: {_total_photos(items, item)}/{MAX_PHOTOS}. "
+        f"Фото добавлено. Всего фото в посте: {len(photos)}/{MAX_PHOTOS}. "
         "Отправьте ещё или нажмите «Готово».",
         reply_markup=sell_photos_done_keyboard(),
     )
@@ -197,14 +204,9 @@ async def sell_photo(message: Message, state: FSMContext) -> None:
 @router.callback_query(SellStates.item_photos, F.data == "sell_photos_done")
 async def sell_photos_done(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    await state.set_state(SellStates.item_description)
     if callback.message:
-        await callback.message.answer(
-            "Введите <b>описание</b> (состояние, доставка и т.д.) "
-            "или нажмите «Пропустить»:",
-            parse_mode="HTML",
-            reply_markup=sell_skip_description_keyboard(),
-        )
+        await callback.message.answer("Фото добавлены.")
+    await _show_menu(callback.message, state)
 
 
 @router.callback_query(SellStates.item_description, F.data == "sell_skip_desc")
@@ -260,11 +262,11 @@ async def sell_preview(callback: CallbackQuery, state: FSMContext) -> None:
         currency=settings.default_currency,
         seller=preview_user,
     )
-    total_photos = _total_photos(items)
+    photos: list[str] = data.get("photos", [])
     if callback.message:
         await callback.message.answer(
             f"<b>Превью объявления:</b>\n\n{caption}\n\n"
-            f"<i>Фото в посте: {total_photos} шт.</i>",
+            f"<i>Фото в посте: {len(photos)} шт.</i>",
             parse_mode="HTML",
             reply_markup=sell_items_menu_keyboard(True),
         )
@@ -286,11 +288,7 @@ async def sell_publish(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     settings = get_settings()
     items: list[dict] = data.get("items", [])
-    photos: list[str] = [
-        file_id
-        for item in items
-        for file_id in item.get("photos", [])
-    ]
+    photos: list[str] = data.get("photos", [])
 
     if not items:
         await callback.answer("Добавьте хотя бы один товар.", show_alert=True)

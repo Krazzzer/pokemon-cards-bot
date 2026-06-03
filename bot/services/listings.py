@@ -91,7 +91,7 @@ async def create_multi_item_listing(
                 price=float(item["price"]),
                 currency=currency,
                 status=ListingStatus.ACTIVE,
-                media_file_ids=json.dumps(item.get("photos", [])),
+                media_file_ids="[]",
             )
         )
     session.add(listing)
