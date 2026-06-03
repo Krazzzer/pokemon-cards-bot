@@ -77,3 +77,24 @@ async def cmd_group_id(message: Message) -> None:
         "Укажите его в GROUP_CHAT_ID в файле .env",
         parse_mode="HTML",
     )
+
+
+@router.message(Command("topicid"))
+async def cmd_topic_id(message: Message) -> None:
+    settings = get_settings()
+    if message.from_user and message.from_user.id not in settings.admin_ids:
+        if settings.admin_ids:
+            return
+
+    thread_id = message.message_thread_id
+    if thread_id is None:
+        await message.reply(
+            "Это сообщение не в топике. Напишите /topicid прямо внутри нужного топика."
+        )
+        return
+
+    await message.reply(
+        f"ID этого топика: <code>{thread_id}</code>\n"
+        "Для продажи укажите его в SALE_TOPIC_ID, для аукциона — в AUCTION_TOPIC_ID.",
+        parse_mode="HTML",
+    )

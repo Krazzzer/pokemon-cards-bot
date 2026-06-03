@@ -289,6 +289,7 @@ async def auction_publish(callback: CallbackQuery, state: FSMContext) -> None:
                 seller=seller,
                 listing=listing,
                 caption_listing=listing,
+                message_thread_id=settings.auction_topic_id,
             )
         except Exception as exc:
             await session.rollback()

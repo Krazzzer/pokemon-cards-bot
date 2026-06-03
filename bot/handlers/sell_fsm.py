@@ -312,6 +312,7 @@ async def sell_publish(callback: CallbackQuery, state: FSMContext) -> None:
                 items=items,
                 media_file_ids=photos,
                 seller=seller,
+                message_thread_id=settings.sale_topic_id,
             )
         except Exception as exc:
             await callback.message.answer(

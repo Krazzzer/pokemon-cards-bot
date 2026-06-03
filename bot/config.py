@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     )
     default_currency: str = Field(default="RUB", alias="DEFAULT_CURRENCY")
     auction_timezone: str = Field(default="Europe/Chisinau", alias="AUCTION_TIMEZONE")
+    sale_topic_id: int | None = Field(default=None, alias="SALE_TOPIC_ID")
+    auction_topic_id: int | None = Field(default=None, alias="AUCTION_TOPIC_ID")
 
     @field_validator("admin_ids", "seller_ids", "allowed_user_ids", mode="before")
     @classmethod
@@ -41,6 +43,13 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [int(x) for x in value]
         return [int(x.strip()) for x in str(value).split(",") if x.strip()]
+
+    @field_validator("sale_topic_id", "auction_topic_id", mode="before")
+    @classmethod
+    def parse_optional_id(cls, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        return int(value)
 
 
 @lru_cache

@@ -266,6 +266,7 @@ async def publish_listing(
     seller: User,
     listing: Listing | None = None,
     caption_listing: Listing | None = None,
+    message_thread_id: int | None = None,
 ) -> tuple[int, list[str]]:
     """Publish to group. Use caption_listing for post text (e.g. auction draft before DB insert)."""
     if caption_listing is not None:
@@ -290,6 +291,7 @@ async def publish_listing(
     if len(media_file_ids) == 1:
         msg = await bot.send_photo(
             chat_id=group_chat_id,
+            message_thread_id=message_thread_id,
             photo=media_file_ids[0],
             caption=caption,
             parse_mode="HTML",
@@ -305,13 +307,18 @@ async def publish_listing(
 
     # Альбом: кнопки на media group часто не работают — текст + кнопка отдельным сообщением
     media = [InputMediaPhoto(media=fid) for fid in media_file_ids[:10]]
-    album_messages = await bot.send_media_group(chat_id=group_chat_id, media=media)
+    album_messages = await bot.send_media_group(
+        chat_id=group_chat_id,
+        message_thread_id=message_thread_id,
+        media=media,
+    )
     album_first_id = album_messages[0].message_id
 
     control_text = f"{caption}\n\n<i>↑ фото лота ({len(media)} шт.)</i>"
 
     control = await bot.send_message(
         chat_id=group_chat_id,
+        message_thread_id=message_thread_id,
         text=control_text,
         parse_mode="HTML",
         reply_markup=keyboard,
@@ -328,12 +335,14 @@ async def publish_multi_item_listing(
     currency: str,
     media_file_ids: list[str],
     seller: User,
+    message_thread_id: int | None = None,
 ) -> tuple[int, list[str]]:
     caption = render_multi_sale_preview(items, currency=currency, seller=seller)
 
     if not media_file_ids:
         msg = await bot.send_message(
             chat_id=group_chat_id,
+            message_thread_id=message_thread_id,
             text=caption,
             parse_mode="HTML",
         )
@@ -342,6 +351,7 @@ async def publish_multi_item_listing(
     if len(media_file_ids) == 1:
         msg = await bot.send_photo(
             chat_id=group_chat_id,
+            message_thread_id=message_thread_id,
             photo=media_file_ids[0],
             caption=caption,
             parse_mode="HTML",
@@ -349,12 +359,17 @@ async def publish_multi_item_listing(
         return msg.message_id, media_file_ids
 
     media = [InputMediaPhoto(media=fid) for fid in media_file_ids[:10]]
-    album_messages = await bot.send_media_group(chat_id=group_chat_id, media=media)
+    album_messages = await bot.send_media_group(
+        chat_id=group_chat_id,
+        message_thread_id=message_thread_id,
+        media=media,
+    )
     album_first_id = album_messages[0].message_id
 
     control_text = f"{caption}\n\n<i>↑ фото товаров ({len(media)} шт.)</i>"
     control = await bot.send_message(
         chat_id=group_chat_id,
+        message_thread_id=message_thread_id,
         text=control_text,
         parse_mode="HTML",
         reply_to_message_id=album_first_id,
