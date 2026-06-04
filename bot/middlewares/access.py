@@ -9,6 +9,16 @@ from bot.services.access import is_user_allowed as is_user_allowed_in_db
 
 
 DENIED_TEXT = "У вас нет доступа к личному меню этого бота."
+PUBLIC_PRIVATE_COMMANDS = {"id", "myid"}
+
+
+def _is_public_private_command(event: Message) -> bool:
+    text = event.text or ""
+    if not text.startswith("/"):
+        return False
+
+    command = text.split(maxsplit=1)[0].removeprefix("/").split("@", maxsplit=1)[0]
+    return command in PUBLIC_PRIVATE_COMMANDS
 
 
 async def is_user_allowed(user: User | None) -> bool:
@@ -28,6 +38,9 @@ class UserAccessMiddleware(BaseMiddleware):
     ) -> Any:
         user = data.get("event_from_user")
         if isinstance(event, Message) and event.chat.type != "private":
+            return await handler(event, data)
+
+        if isinstance(event, Message) and _is_public_private_command(event):
             return await handler(event, data)
 
         if (

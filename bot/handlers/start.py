@@ -64,6 +64,19 @@ async def menu_button(message: Message) -> None:
     await _show_start_menu(message)
 
 
+@router.message(Command("id", "myid"))
+async def cmd_user_id(message: Message) -> None:
+    user = message.from_user
+    if user is None:
+        return
+
+    await message.reply(
+        "ID: "
+        f"<code>{user.id}</code>\n",
+        parse_mode="HTML",
+    )
+
+
 @router.message(Command("groupid"))
 async def cmd_group_id(message: Message) -> None:
     settings = get_settings()
