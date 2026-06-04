@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import Bid, Listing, ListingItem, ListingKind, ListingStatus, User
 from bot.services.listing_utils import is_auction
 
+MAX_SALE_LISTING_ITEMS = 10
+
 
 async def upsert_user(
     session: AsyncSession,
@@ -70,6 +72,10 @@ async def create_multi_item_listing(
     group_chat_id: int,
     message_id: int,
 ) -> Listing:
+    if len(items) > MAX_SALE_LISTING_ITEMS:
+        raise ValueError(
+            f"В объявлении может быть не больше {MAX_SALE_LISTING_ITEMS} товаров."
+        )
     listing = Listing(
         seller_id=seller_id,
         kind=ListingKind.SALE,

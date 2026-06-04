@@ -13,7 +13,11 @@ from bot.keyboards.inline import (
     sell_photos_done_keyboard,
     sell_skip_description_keyboard,
 )
-from bot.services.listings import create_multi_item_listing, upsert_user
+from bot.services.listings import (
+    MAX_SALE_LISTING_ITEMS,
+    create_multi_item_listing,
+    upsert_user,
+)
 from bot.services.posts import (
     attach_group_listing_keyboard,
     publish_multi_item_listing,
@@ -88,10 +92,14 @@ async def _show_menu(message: Message | None, state: FSMContext) -> None:
     await message.answer(
         "<b>Создание объявления со списком товаров</b>\n\n"
         f"{_items_summary(items, settings.default_currency)}\n\n"
+        f"Товаров: {len(items)}/{MAX_SALE_LISTING_ITEMS}\n"
         f"Фото в посте: {len(photos)}/{MAX_PHOTOS}\n\n"
         "Добавьте товары по порядку. Когда список будет готов — опубликуйте.",
         parse_mode="HTML",
-        reply_markup=sell_items_menu_keyboard(bool(items)),
+        reply_markup=sell_items_menu_keyboard(
+            bool(items),
+            can_add_items=len(items) < MAX_SALE_LISTING_ITEMS,
+        ),
     )
 
 
@@ -99,6 +107,12 @@ async def _show_menu(message: Message | None, state: FSMContext) -> None:
 async def sell_add_item(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     items: list[dict] = data.get("items", [])
+    if len(items) >= MAX_SALE_LISTING_ITEMS:
+        await callback.answer(
+            f"В объявлении может быть не больше {MAX_SALE_LISTING_ITEMS} товаров.",
+            show_alert=True,
+        )
+        return
     await callback.answer()
     await state.update_data(current_item={})
     await state.set_state(SellStates.item_title)
@@ -233,6 +247,14 @@ async def _finish_current_item(
     item = dict(data.get("current_item", {}))
     item["description"] = description
     items: list[dict] = list(data.get("items", []))
+    if len(items) >= MAX_SALE_LISTING_ITEMS:
+        if message:
+            await message.answer(
+                f"Достигнут лимит — в объявлении не больше "
+                f"{MAX_SALE_LISTING_ITEMS} товаров."
+            )
+        await _show_menu(message, state)
+        return
     items.append(item)
     await state.update_data(items=items, current_item=None)
     if message:
@@ -268,7 +290,10 @@ async def sell_preview(callback: CallbackQuery, state: FSMContext) -> None:
             f"<b>Превью объявления:</b>\n\n{caption}\n\n"
             f"<i>Фото в посте: {len(photos)} шт.</i>",
             parse_mode="HTML",
-            reply_markup=sell_items_menu_keyboard(True),
+            reply_markup=sell_items_menu_keyboard(
+                True,
+                can_add_items=len(items) < MAX_SALE_LISTING_ITEMS,
+            ),
         )
 
 
@@ -292,6 +317,12 @@ async def sell_publish(callback: CallbackQuery, state: FSMContext) -> None:
 
     if not items:
         await callback.answer("Добавьте хотя бы один товар.", show_alert=True)
+        return
+    if len(items) > MAX_SALE_LISTING_ITEMS:
+        await callback.answer(
+            f"В объявлении может быть не больше {MAX_SALE_LISTING_ITEMS} товаров.",
+            show_alert=True,
+        )
         return
 
     await callback.answer("Публикую…")

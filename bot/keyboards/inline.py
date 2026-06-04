@@ -303,16 +303,29 @@ def sell_confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def sell_items_menu_keyboard(has_items: bool) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="Добавить товар", callback_data="sell_add_item")]]
+def sell_items_menu_keyboard(
+    has_items: bool,
+    *,
+    can_add_items: bool = True,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    top_row: list[InlineKeyboardButton] = []
+    if can_add_items:
+        top_row.append(
+            InlineKeyboardButton(text="Добавить товар", callback_data="sell_add_item")
+        )
     if has_items:
-        rows[0].append(InlineKeyboardButton(text="Добавить фото", callback_data="sell_add_photo"))
+        top_row.append(
+            InlineKeyboardButton(text="Добавить фото", callback_data="sell_add_photo")
+        )
         rows.append(
             [
                 InlineKeyboardButton(text="Предпросмотр", callback_data="sell_preview"),
                 InlineKeyboardButton(text="Опубликовать", callback_data="sell_publish"),
             ]
         )
+    if top_row:
+        rows.insert(0, top_row)
     rows.append([InlineKeyboardButton(text="Отмена", callback_data="sell_abort")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
