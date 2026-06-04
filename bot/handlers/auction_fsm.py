@@ -4,7 +4,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, User as TelegramUser
 
 from bot.config import get_settings
 from bot.db.models import Listing, ListingKind, ListingStatus, User
@@ -185,18 +185,27 @@ async def auction_photos_done(callback: CallbackQuery, state: FSMContext) -> Non
         await callback.answer("Добавьте хотя бы одно фото.", show_alert=True)
         return
     await callback.answer()
-    await _show_auction_preview(callback.message, state)
+    await _show_auction_preview(
+        callback.message,
+        state,
+        seller_user=callback.from_user,
+    )
 
 
-async def _show_auction_preview(message: Message | None, state: FSMContext) -> None:
-    if message is None:
+async def _show_auction_preview(
+    message: Message | None,
+    state: FSMContext,
+    *,
+    seller_user: TelegramUser | None,
+) -> None:
+    if message is None or seller_user is None:
         return
     data = await state.get_data()
     settings = get_settings()
-    user = message.from_user
     preview_user = User(
-        telegram_id=user.id if user else 0,
-        username=user.username if user else None,
+        telegram_id=seller_user.id,
+        username=seller_user.username,
+        full_name=seller_user.full_name,
     )
     ends_at = datetime.fromisoformat(data["ends_at"])
     preview = Listing(
