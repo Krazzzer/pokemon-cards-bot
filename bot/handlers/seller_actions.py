@@ -20,10 +20,11 @@ from bot.services.listings import (
     has_listing_items,
     mark_listing_item_sold,
     mark_sold,
+    revert_last_bid,
     unreserve_listing_item,
     unreserve_listing,
 )
-from bot.services.posts import render_caption, update_listing_post
+from bot.services.posts import format_price, render_caption, update_listing_post
 from bot.services.seller_access import ensure_seller_message
 
 router = Router(name="seller_actions")
@@ -56,6 +57,11 @@ def _item_status_label(item: ListingItem) -> str:
     return labels.get(status, status)
 
 
+def _listing_card_text(listing, *, leader_username: str | None = None) -> str:
+    caption = render_caption(listing, leader_username=leader_username)
+    return f"<b>{listing.title}</b> — {_status_label(listing)}\n{caption}"
+
+
 async def _send_listing_card(target: Message, listing) -> None:
     if has_listing_items(listing):
         await target.answer(render_caption(listing), parse_mode="HTML")
@@ -70,12 +76,8 @@ async def _send_listing_card(target: Message, listing) -> None:
             )
         return
 
-    text = (
-        f"<b>{listing.title}</b> — {_status_label(listing)}\n"
-        f"{render_caption(listing)}"
-    )
     kb = seller_listing_keyboard(listing)
-    await target.answer(text, parse_mode="HTML", reply_markup=kb)
+    await target.answer(_listing_card_text(listing), parse_mode="HTML", reply_markup=kb)
 
 
 def _find_item(listing, item_id: str) -> ListingItem | None:
@@ -276,6 +278,74 @@ async def on_cancel_listing(callback: CallbackQuery) -> None:
             render_caption(listing),
             parse_mode="HTML",
             reply_markup=None,
+        )
+
+
+_UNDO_BID_FAIL_MESSAGES = {
+    "not_found": "Аукцион не найден.",
+    "not_seller": "Это не ваш аукцион.",
+    "not_auction": "Это не аукцион.",
+    "not_active": "Аукцион уже завершён.",
+    "ended": "Время аукциона истекло.",
+    "no_bids": "Ставок для отмены нет.",
+    "stale": "Состояние аукциона изменилось. Обновите /my.",
+    "concurrent_change": "Появилась новая ставка. Обновите /my.",
+}
+
+
+@router.callback_query(F.data.startswith("undobid:"))
+async def on_undo_bid(callback: CallbackQuery) -> None:
+    if callback.from_user is None:
+        return
+
+    listing_id = (callback.data or "").removeprefix("undobid:")
+    seller_id = callback.from_user.id
+
+    async with get_session_factory()() as session:
+        result = await revert_last_bid(session, listing_id, seller_id)
+        leader = (
+            await session.get(User, result.listing.high_bidder_id)
+            if result.ok and result.listing and result.listing.high_bidder_id
+            else None
+        )
+
+    if not result.ok or result.listing is None:
+        reason = _UNDO_BID_FAIL_MESSAGES.get(
+            result.reason or "",
+            "Не удалось отменить ставку.",
+        )
+        await callback.answer(reason, show_alert=True)
+        return
+
+    listing = result.listing
+    leader_username = leader.username if leader else None
+    await update_listing_post(
+        callback.bot,
+        listing,
+        leader_username=leader_username,
+    )
+
+    if result.removed_bidder_id and result.removed_amount is not None:
+        try:
+            await callback.bot.send_message(
+                result.removed_bidder_id,
+                text=(
+                    f"Продавец отменил вашу ставку в аукционе "
+                    f"<b>{listing.title}</b> "
+                    f"({format_price(result.removed_amount, listing.currency)})."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    await callback.answer("Последняя ставка отменена.")
+
+    if callback.message:
+        await callback.message.edit_text(
+            _listing_card_text(listing, leader_username=leader_username),
+            parse_mode="HTML",
+            reply_markup=seller_listing_keyboard(listing),
         )
 
 

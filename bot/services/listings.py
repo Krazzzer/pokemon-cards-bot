@@ -529,6 +529,23 @@ class BidResult:
         self.previous_bidder_id = previous_bidder_id
 
 
+class RevertBidResult:
+    def __init__(
+        self,
+        ok: bool,
+        listing: Listing | None = None,
+        *,
+        reason: str | None = None,
+        removed_bidder_id: int | None = None,
+        removed_amount: float | None = None,
+    ):
+        self.ok = ok
+        self.listing = listing
+        self.reason = reason
+        self.removed_bidder_id = removed_bidder_id
+        self.removed_amount = removed_amount
+
+
 async def place_bid(
     session: AsyncSession,
     listing_id: str,
@@ -581,6 +598,87 @@ async def place_bid(
     await session.commit()
     listing = await get_listing(session, listing_id)
     return BidResult(True, listing, previous_bidder_id=previous_bidder)
+
+
+async def revert_last_bid(
+    session: AsyncSession,
+    listing_id: str,
+    seller_id: int,
+) -> RevertBidResult:
+    listing = await get_listing(session, listing_id)
+    if listing is None:
+        return RevertBidResult(False, reason="not_found")
+
+    if listing.seller_id != seller_id:
+        return RevertBidResult(False, listing, reason="not_seller")
+
+    if not is_auction(listing):
+        return RevertBidResult(False, listing, reason="not_auction")
+
+    if listing.status != ListingStatus.ACTIVE:
+        return RevertBidResult(False, listing, reason="not_active")
+
+    now = datetime.utcnow()
+    if listing.ends_at is None or listing.ends_at <= now:
+        return RevertBidResult(False, listing, reason="ended")
+
+    result = await session.execute(
+        select(Bid)
+        .where(Bid.listing_id == listing_id)
+        .order_by(Bid.created_at.desc(), Bid.id.desc())
+        .limit(1)
+    )
+    last_bid = result.scalar_one_or_none()
+    if last_bid is None:
+        return RevertBidResult(False, listing, reason="no_bids")
+
+    removed_bidder_id = last_bid.user_id
+    removed_amount = last_bid.amount
+
+    if listing.price != removed_amount or listing.high_bidder_id != removed_bidder_id:
+        return RevertBidResult(False, listing, reason="stale")
+
+    prev_result = await session.execute(
+        select(Bid)
+        .where(Bid.listing_id == listing_id, Bid.id != last_bid.id)
+        .order_by(Bid.created_at.desc(), Bid.id.desc())
+        .limit(1)
+    )
+    prev_bid = prev_result.scalar_one_or_none()
+
+    if prev_bid is not None:
+        new_price = prev_bid.amount
+        new_leader_id = prev_bid.user_id
+    else:
+        assert listing.start_price is not None
+        new_price = listing.start_price
+        new_leader_id = None
+
+    update_result = await session.execute(
+        update(Listing)
+        .where(
+            Listing.id == listing_id,
+            Listing.kind == ListingKind.AUCTION,
+            Listing.status == ListingStatus.ACTIVE,
+            Listing.ends_at > now,
+            Listing.price == removed_amount,
+            Listing.high_bidder_id == removed_bidder_id,
+        )
+        .values(price=new_price, high_bidder_id=new_leader_id)
+    )
+    if update_result.rowcount == 0:
+        listing = await get_listing(session, listing_id)
+        return RevertBidResult(False, listing, reason="concurrent_change")
+
+    await session.delete(last_bid)
+    await session.commit()
+    listing = await get_listing(session, listing_id)
+    return RevertBidResult(
+        True,
+        listing,
+        removed_bidder_id=removed_bidder_id,
+        removed_amount=removed_amount,
+    )
 
 
 async def get_expired_auctions(session: AsyncSession) -> list[Listing]:

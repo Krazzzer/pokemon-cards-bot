@@ -192,10 +192,16 @@ def seller_listing_keyboard(listing: Listing) -> InlineKeyboardMarkup | None:
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
+                            text="Отменить последнюю ставку",
+                            callback_data=f"undobid:{listing.id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
                             text="Завершить аукцион",
                             callback_data=f"endauc:{listing.id}",
                         )
-                    ]
+                    ],
                 ]
             )
         return InlineKeyboardMarkup(
